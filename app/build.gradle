@@ -1,0 +1,202 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+
+android {
+    namespace 'com.example.testhook'
+    compileSdk 34
+
+    testOptions {
+        execution 'ANDROID_TEST_ORCHESTRATOR'
+    }
+
+    defaultConfig {
+        applicationId "com.example.testhook"
+        minSdk 28
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+
+            cmake {
+                //  arguments "-DRXDEBUG=OFF" ,"-DTEXTSO=${Rxposed_InjectTest_So}" , "-DINJECTSO=${Rxposed_Inject_So}" //给cmake传参数
+                cppFlags '-DRXDEBUG=1'      //给c++传递编译参数 源文件文件编译宏参数
+                abiFilters 'armeabi-v7a', 'arm64-v8a'
+            }
+
+            //android.mk 配置
+            ndk {
+                abiFilters 'armeabi-v7a', 'arm64-v8a'           //写在这里
+            }
+        }
+
+        sourceSets {
+            main {
+                java {
+                    srcDirs = ['src/main/java']
+
+                    if (project.hasProperty('myParam')) {
+                        def myParam = project.findProperty('myParam')
+
+                        if (myParam == 'special') {
+                            println "===========>  special"
+                        }else{
+                            exclude rootProject.ext.excludedClass
+                        }
+                    }else{
+                        println "===========>  exclude"
+                        exclude rootProject.ext.excludedClass
+                    }
+
+                }
+                jniLibs {
+                    srcDirs = ['src/main/lib']
+                }
+
+            }
+        }
+
+
+    }
+
+
+    buildTypes {
+        4
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    externalNativeBuild {
+        cmake { //不编译so，存在兼容性问题
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+    ndkVersion '23.1.7779620' //这个需要高一点的版本，因为编译中使用了自定的linker，有部分elf的宏，只有在新版本中才会存在
+
+}
+
+
+//随机字符
+def generateRandomString(int length) {
+    def chars = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+    def random = new Random()
+    def randomString = (1..length).collect { chars[random.nextInt(chars.size())] }.join()
+    return randomString
+}
+
+
+task buildPushAndGetPid {
+    group = "custom"
+    description = "Rebuild the APK, push it to the device, and get the PID of the app."
+
+
+    doLast {
+
+        exec {
+            commandLine rootProject.projectDir.getAbsolutePath()+'\\gradlew.bat', 'assembleDebug', '-PmyParam=special','--build-cache','--parallel', '--configure-on-demand', '--daemon', '--offline'
+        }
+
+
+        // 2. 获取 APK 路径
+        def apkFile = file("${buildDir}/outputs/apk/debug/app-debug.apk")
+
+        def type = 'lsposed'
+        def apk_path = '/data/local/tmp/base' + generateRandomString(5) + '.apk'
+        def classname = 'com.example.testhook.MyInstrumentation'
+        def method = 'useAppContext'
+        def argument = 'kk'
+        def packageName = "com.hepta.dumpdex"
+
+        // 3. 推送 APK 到设备
+        exec {
+            commandLine 'adb', 'push', apkFile.absolutePath, apk_path
+        }
+
+        exec {
+            commandLine 'adb', 'shell', 'su', '-c', 'chmod 777', apk_path
+        }
+
+        // 5. 执行 adb shell pidof 命令获取 PID
+        def pidOutput = new ByteArrayOutputStream()
+        def pidError = new ByteArrayOutputStream()
+        exec {
+            commandLine 'adb', 'shell', 'pidof', packageName
+            standardOutput = pidOutput
+            errorOutput = pidError
+            ignoreExitValue = true
+        }
+        println "adb shell pidof output: ${pidOutput.toString()}"
+        println "adb shell pidof error: ${pidError.toString()}"
+        println('====> pid:' + pidOutput.toString())
+        def pid = pidOutput.toString().trim();
+        def pidOutput1 = new ByteArrayOutputStream()
+        exec {
+            commandLine 'adb', 'shell', 'su', '-c', 'cat /proc/' + pid + '/exe | file -'
+            standardOutput = pidOutput1
+            errorOutput = pidError
+            ignoreExitValue = true
+        }
+        def is64bit = true
+
+        if (!pidOutput1.toString().contains('64-bit')) {
+            is64bit = false
+        }
+
+        def tools
+        if (is64bit) {
+            tools = '/data/local/tmp/inject/arm64_InjectTool'
+        } else {
+            tools = '/data/local/tmp/inject/arm32_InjectTool'
+        }
+        println('====> is64bit' + is64bit)
+        def tools_so
+        if (is64bit) {
+            tools_so = '/data/local/tmp/inject/libtest64.so'
+        } else {
+            tools_so = '/data/local/tmp/inject/libtest32.so'
+        }
+        println('====> tools path' + tools)
+        println('====> so path' + tools_so)
+        def pidOutput2 = new ByteArrayOutputStream()
+        exec {
+            commandLine 'adb', 'shell', 'su', '-c', tools, '-p', pid, '-so', tools_so, '-symbols', '_Z14Inject_PorcessPKc', type + ':' + apk_path + ':' + classname + ':' + method + ':' + argument
+            standardOutput = pidOutput2
+            errorOutput = pidError
+            ignoreExitValue = true
+        }
+        println('====> result:' + pidOutput2.toString())
+        println('====> error:' + pidError.toString())
+
+        println('====>  delete apk')
+        exec {
+            commandLine 'adb', 'shell', 'su', '-c', 'rm', apk_path
+        }
+    }
+}
+
+dependencies {
+
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.activity
+    implementation libs.constraintlayout
+    compileOnly files('libs\\XposedBridgeApi.jar')
+    //implementation files('libs\\core-debug.aar')
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+
+    androidTestUtil 'androidx.test:orchestrator:1.4.2'
+    implementation 'org.apache.commons:commons-lang3:3.13.0'
+}
