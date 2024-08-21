@@ -11,10 +11,12 @@ qhook,是一个xposed的模块,帮助用户在不重启应用的情况下,更新
 
 
 ### 功能原理
-+ 参考rxjava的进程注入方式,使用ptrace注入so来加载apk到目标
++ 参考rxposed的进程注入方式,使用ptrace注入so来加载apk到目标
 + 因为lsposed将XposedHelpers,XposedBridge类重新命名了,所以需要进行hook将新的名称给获取到,然后hook classloader将xposed api的classloader传递给新的注入的插件
 + 使用代理的方式将本地的xposed api转为远程目标中的xposed,并进行动态hook
 + 每次使用脚本会将自动构建apk,并将apk推送到/data/local/tmp的目录中,然后目标加载该apk,执行其中的方法
++ 保存所有Unhook的钩子，在下一次启动时执行unhook动作
+
 
 ### 使用说明
 + 正常编译为xposed模块,第一次需要root权限打开进行初始化
@@ -29,6 +31,7 @@ def argument = 'kk'  #参数,传递参数到apk中
 def packageName = "com.hepta.dumpdex"   #目标的包名
 ```
 + 如果注入的apk中包含的类和xposed中包含的类相同,则注入的apk中的类将不会更新,因此在编译xposed时需要排除一些类,这样在注入后的apk中用到的将会是更新后的类,配置类的位置在 build.gradle文件中的excludedClass中
+
 
 
 
